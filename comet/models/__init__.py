@@ -98,11 +98,15 @@ def load_from_checkpoint(
         # This is a workaround for the bug reported in version 2.2.4
         # issue number #244
         try:
-            import pkg_resources
-            comet_version = pkg_resources.get_distribution("unbabel-comet").version
-            use_softmax = (pkg_resources.parse_version(comet_version) >= pkg_resources.parse_version("2.2.4") and 
-                          hparams.get("layer_transformation") == "sparsemax_patch")
-        except:
+            from importlib.metadata import version as _pkg_version
+            from packaging.version import Version
+
+            comet_version = _pkg_version("unbabel-comet")
+            use_softmax = (
+                Version(comet_version) >= Version("2.2.4")
+                and hparams.get("layer_transformation") == "sparsemax_patch"
+            )
+        except Exception:
             use_softmax = False
 
         # Add the override parameter only if needed

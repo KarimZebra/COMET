@@ -304,9 +304,17 @@ class Encoder(nn.Module, metaclass=abc.ABCMeta):
                 torch.zeros(len(new_sequence[1:-1]) + 2, dtype=torch.int)
             )
             for j in range(1, len(inputs)):
-                new_sequence = self.tokenizer.build_inputs_with_special_tokens(
-                    new_sequence[1:-1], concat_input_ids[j][i][1:-1]
-                )
+                # transformers v4 tokenizers expose build_inputs_with_special_tokens
+                # directly; v5 TokenizersBackend does not, so encoders provide
+                # their own implementation (see Encoder.build_inputs_with_special_tokens).
+                if hasattr(self.tokenizer, "build_inputs_with_special_tokens"):
+                    new_sequence = self.tokenizer.build_inputs_with_special_tokens(
+                        new_sequence[1:-1], concat_input_ids[j][i][1:-1]
+                    )
+                else:
+                    new_sequence = self.build_inputs_with_special_tokens(
+                        new_sequence[1:-1], concat_input_ids[j][i][1:-1]
+                    )
             if sum(lengths) > self.max_positions - special_tokens:
                 new_sequence = new_sequence[: self.max_positions]
 
@@ -341,3 +349,15 @@ class Encoder(nn.Module, metaclass=abc.ABCMeta):
             encoder_input["token_type_ids"] = token_type_ids
 
         return encoder_input, lengths, max_len
+
+    def build_inputs_with_special_tokens(
+        self,
+        token_ids_0: List[int],
+        token_ids_1: Optional[List[int]] = None,
+    ) -> List[int]:
+        """Fallback used when the underlying tokenizer (transformers v5
+        TokenizersBackend) does not expose build_inputs_with_special_tokens.
+        Concrete encoders override this with model-specific [CLS]/[SEP] logic."""
+        if token_ids_1 is None:
+            return token_ids_0
+        return token_ids_0 + token_ids_1

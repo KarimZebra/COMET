@@ -17,11 +17,12 @@ XLM-RoBERTa Encoder
 ==============
     Pretrained XLM-RoBERTa  encoder from Hugging Face.
 """
-from typing import Dict
+from typing import Dict, List, Optional
 
 import torch
-from transformers import XLMRobertaConfig, XLMRobertaModel, XLMRobertaTokenizerFast
+from transformers import XLMRobertaConfig, XLMRobertaModel
 
+from comet.encoders._compat import XLMRobertaTokenizerCompat
 from comet.encoders.base import Encoder
 from comet.encoders.bert import BERTEncoder
 
@@ -43,7 +44,7 @@ class XLMREncoder(BERTEncoder):
         local_files_only: bool = False,
     ) -> None:
         super(Encoder, self).__init__()
-        self.tokenizer = XLMRobertaTokenizerFast.from_pretrained(
+        self.tokenizer = XLMRobertaTokenizerCompat.from_pretrained(
             pretrained_model, local_files_only=local_files_only
         )
         if load_pretrained_weights:
@@ -92,15 +93,34 @@ class XLMREncoder(BERTEncoder):
     def forward(
         self, input_ids: torch.Tensor, attention_mask: torch.Tensor, **kwargs
     ) -> Dict[str, torch.Tensor]:
-        last_hidden_states, _, all_layers = self.model(
+        output = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             output_hidden_states=True,
             return_dict=False,
         )
+        # transformers v5 drops the pooler_output slot when the model is built
+        # with add_pooling_layer=False; v4 keeps a None placeholder.
+        if len(output) == 2:
+            last_hidden_states, all_layers = output
+        else:
+            last_hidden_states, _, all_layers = output
         return {
             "sentemb": last_hidden_states[:, 0, :],
             "wordemb": last_hidden_states,
             "all_layers": all_layers,
             "attention_mask": attention_mask,
         }
+
+    def build_inputs_with_special_tokens(
+        self,
+        token_ids_0: List[int],
+        token_ids_1: Optional[List[int]] = None,
+    ) -> List[int]:
+        """XLM-R style: <s> A </s> (</s> B </s>)? — used as the v5 fallback
+        when the tokenizer backend does not expose this method itself."""
+        cls = [self.tokenizer.cls_token_id]
+        sep = [self.tokenizer.sep_token_id]
+        if token_ids_1 is None:
+            return cls + token_ids_0 + sep
+        return cls + token_ids_0 + sep + sep + token_ids_1 + sep
