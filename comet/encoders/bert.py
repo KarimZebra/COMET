@@ -17,11 +17,12 @@ BERT Encoder
 ==============
     Pretrained BERT encoder from Hugging Face.
 """
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import torch
-from transformers import BertConfig, BertModel, BertTokenizerFast
+from transformers import BertConfig, BertModel
 
+from comet.encoders._compat import BertTokenizerCompat
 from comet.encoders.base import Encoder
 
 
@@ -42,8 +43,8 @@ class BERTEncoder(Encoder):
         local_files_only: bool = False,
     ) -> None:
         super().__init__()
-        self.tokenizer = BertTokenizerFast.from_pretrained(
-            pretrained_model, use_fast=True, local_files_only=local_files_only
+        self.tokenizer = BertTokenizerCompat.from_pretrained(
+            pretrained_model, local_files_only=local_files_only
         )
         if load_pretrained_weights:
             self.model = BertModel.from_pretrained(
@@ -168,16 +169,36 @@ class BERTEncoder(Encoder):
             Dict[str, torch.Tensor]: dictionary with 'sentemb', 'wordemb', 'all_layers'
                 and 'attention_mask'.
         """
-        last_hidden_states, pooler_output, all_layers = self.model(
+        output = self.model(
             input_ids=input_ids,
             token_type_ids=token_type_ids,
             attention_mask=attention_mask,
             output_hidden_states=True,
             return_dict=False,
         )
+        # transformers v5 drops pooler_output from the tuple when the model is
+        # built with add_pooling_layer=False; v4 keeps a None slot.
+        if len(output) == 2:
+            last_hidden_states, all_layers = output
+            pooler_output = None
+        else:
+            last_hidden_states, pooler_output, all_layers = output
         return {
             "sentemb": pooler_output,
             "wordemb": last_hidden_states,
             "all_layers": all_layers,
             "attention_mask": attention_mask,
         }
+
+    def build_inputs_with_special_tokens(
+        self,
+        token_ids_0: List[int],
+        token_ids_1: Optional[List[int]] = None,
+    ) -> List[int]:
+        """BERT-style [CLS] A [SEP] (B [SEP])? — used as the v5 fallback when
+        the tokenizer backend does not expose this method itself."""
+        cls = [self.tokenizer.cls_token_id]
+        sep = [self.tokenizer.sep_token_id]
+        if token_ids_1 is None:
+            return cls + token_ids_0 + sep
+        return cls + token_ids_0 + sep + token_ids_1 + sep
